@@ -5,6 +5,7 @@ import cv2
 import torch
 import numpy as np
 import scipy.misc
+from PIL import Image
 
 from core import constants
 
@@ -83,7 +84,9 @@ def crop(img, center, scale, res, rot=0):
         new_img = scipy.misc.imrotate(new_img, rot)
         new_img = new_img[pad:-pad, pad:-pad]
 
-    new_img = scipy.misc.imresize(new_img, res)
+    # new_img = scipy.misc.imresize(new_img, res)
+    new_img = np.array(Image.fromarray(new_img.astype(np.uint8)).resize(res))
+    
     return new_img
 
 def uncrop(img, center, scale, orig_shape, rot=0, is_rgb=True):

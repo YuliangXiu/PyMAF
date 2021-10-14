@@ -22,6 +22,7 @@ import time
 import json
 import torch
 import joblib
+import glob
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -97,60 +98,68 @@ def run_image_demo(args):
         renderer = PyRenderer(resolution=(constants.IMG_RES, constants.IMG_RES))
 
     # Preprocess input image and generate predictions
-    img_np, img, norm_img = process_image(args.img_file, input_res=constants.IMG_RES)
-    with torch.no_grad():
-        if args.regressor == 'hmr-spin':
-            pred_rotmat, pred_betas, pred_camera = model(norm_img.to(device))
-            pred_output = smpl(betas=pred_betas, body_pose=pred_rotmat[:,1:], global_orient=pred_rotmat[:,0].unsqueeze(1), pose2rot=False)
-            pred_vertices = pred_output.vertices
-        elif args.regressor == 'pymaf_net':
-            preds_dict, _ = model(norm_img.to(device))
-            output = preds_dict['smpl_out'][-1]
-            pred_camera = output['theta'][:, :3]
-            pred_vertices = output['verts']
+    for img_path in tqdm(glob.glob(f"{args.image_folder}/*.jpg")):
+        img_np, img, norm_img = process_image(img_path, input_res=constants.IMG_RES)
+        import pdb; pdb.set_trace()
+        with torch.no_grad():
+            if args.regressor == 'hmr-spin':
+                pred_rotmat, pred_betas, pred_camera = model(norm_img.to(device))
+                
+                pred_output = smpl(betas=pred_betas, 
+                                   body_pose=pred_rotmat[:,1:], 
+                                   global_orient=pred_rotmat[:,0].unsqueeze(1), 
+                                   pose2rot=False)
+                
+                pred_vertices = pred_output.vertices
+            elif args.regressor == 'pymaf_net':
+                preds_dict, _ = model(norm_img.to(device))
+                output = preds_dict['smpl_out'][-1]
+                pred_camera = output['theta'][:, :3]
+                pred_vertices = output['verts']
 
-    # Calculate camera parameters for rendering
-    camera_translation = torch.stack([pred_camera[:,1], pred_camera[:,2], 2*constants.FOCAL_LENGTH/(constants.IMG_RES * pred_camera[:,0] +1e-9)],dim=-1)
-    camera_translation = camera_translation[0].cpu().numpy()
-    pred_vertices = pred_vertices[0].cpu().numpy()
+        # Calculate camera parameters for rendering
+        # camera_translation = torch.stack([pred_camera[:,1], pred_camera[:,2], 2*constants.FOCAL_LENGTH/(constants.IMG_RES * pred_camera[:,0] +1e-9)],dim=-1)
+        # camera_translation = camera_translation[0].cpu().numpy()
+        pred_vertices = pred_vertices[0].cpu().numpy()
 
-    img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
-
-    # Render front-view shape
-    save_mesh_path = None
-    img_shape = renderer(
-                    pred_vertices[None, :, :] if args.use_opendr else pred_vertices,
-                    img=img_np,
-                    cam=pred_camera[0],
-                    color_type='purple',
-                    mesh_filename=save_mesh_path
-                )
-
-    # Render side views
-    aroundy = cv2.Rodrigues(np.array([0, np.radians(90.), 0]))[0]
-    center = pred_vertices.mean(axis=0)
-    rot_vertices = np.dot((pred_vertices - center), aroundy) + center
-    
-    # Render side-view shape
-    img_shape_side = renderer(
-                        rot_vertices[None, :, :] if args.use_opendr else rot_vertices,
-                        img=np.ones_like(img_np),
+        img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
+        
+        # Render front-view shape
+        save_mesh_path = None
+        img_shape = renderer(
+                        pred_vertices[None, :, :] if args.use_opendr else pred_vertices,
+                        img=img_np,
                         cam=pred_camera[0],
                         color_type='purple',
                         mesh_filename=save_mesh_path
                     )
 
-    # ========= Save rendered image ========= #
-    output_path = os.path.join(args.output_folder, args.img_file.split('/')[-2])
-    os.makedirs(output_path, exist_ok=True)
+        # # Render side views
+        # aroundy = cv2.Rodrigues(np.array([0, np.radians(90.), 0]))[0]
+        # center = pred_vertices.mean(axis=0)
+        # rot_vertices = np.dot((pred_vertices - center), aroundy) + center
+        
+        # # Render side-view shape
+        # img_shape_side = renderer(
+        #                     rot_vertices[None, :, :] if args.use_opendr else rot_vertices,
+        #                     img=np.ones_like(img_np),
+        #                     cam=pred_camera[0],
+        #                     color_type='purple',
+        #                     mesh_filename=save_mesh_path
+        #                 )
 
-    img_name = os.path.basename(args.img_file).split('.')[0]
-    save_name = os.path.join(output_path, img_name)
-    
-    cv2.imwrite(save_name + '_smpl.png', img_shape)
-    cv2.imwrite(save_name + '_smpl_side.png', img_shape_side)
-    
-    print(f'Saved the result image to {output_path}.')
+        # ========= Save rendered image ========= #
+        output_path = os.path.join(args.output_folder, img_path.split('/')[-2])
+        os.makedirs(output_path, exist_ok=True)
+
+        img_name = os.path.basename(img_path)[:-4]
+        save_name = os.path.join(output_path, img_name)
+        
+        cv2.imwrite(save_name + '_smpl.png', img_shape)
+        np.save(save_name + "_smpl", preds_dict, allow_pickle=True)
+        # cv2.imwrite(save_name + '_smpl_side.png', img_shape_side)
+        
+        # print(f'Saved the result image to {output_path}.')
 
 
 def run_video_demo(args):
@@ -564,9 +573,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     parse_args(args)
 
-    if args.img_file is not None:
-        print('Run demo for a single input image.')
-        run_image_demo(args)
-    else:
-        print('Run demo for a video input.')
-        run_video_demo(args)
+    # if args.img_file is not None:
+    print('Run demo for a single input image.')
+    run_image_demo(args)
+    # else:
+    #     print('Run demo for a video input.')
+    # run_video_demo(args)
